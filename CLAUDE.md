@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 STM32F103C8T6 (Blue Pill) 的 SimpleFOC 电机控制项目。CubeMX 6.17.0 生成，使用 STM32Cube FW_F1 V1.8.7，CMake + Ninja + arm-none-eabi-gcc 构建。
 
-## 构建命令
+## 构建 & 烧录命令
 
 ```bash
 # 配置 (Debug)
@@ -15,16 +15,30 @@ cmake --preset Debug
 # 编译
 cmake --build --preset Debug
 
-# 或指定 build 目录
-cmake --build build/Debug
+# 有线烧录 (xpack OpenOCD + cmsis-dap)
+openocd -s "C:/APPS/MCU_data/xpack-openocd-0.11.0-5-win32-x64/xpack-openocd-0.11.0-5/scripts" \
+  -f interface/cmsis-dap.cfg -f target/stm32f1x.cfg \
+  -c "program build/Debug/simpleFOC_1.elf verify reset exit"
 
-# 清理
-cmake --build build/Debug --target clean
-
-# Release 构建
-cmake --preset Release
-cmake --build --preset Release
+# 无线烧录 (elaphureLink OpenOCD → ESP32C3 dap.local:3240)
+openocd -s "C:/APPS/MCU_data/elaphurelink-openocd-win32-x64/share/openocd/scripts" \
+  -f wireless-dap.cfg -f target/stm32f1x.cfg \
+  -c "program build/Debug/simpleFOC_1.elf verify reset exit"
 ```
+
+## 调试
+
+| 操作 | 方式 |
+|------|------|
+| **F5 → Debug (Wired DapLink)** | 有线调试 (cmsis-dap USB) |
+| **F5 → Debug (Wireless DAP)** | 无线调试 (ESP32C3, mDNS: `dap.local:3240`, elaphureLink 协议) |
+| **Ctrl+Shift+B** | 编译 |
+| **Ctrl+Shift+P → Tasks: Run Task → Flash** | 有线烧录 |
+| **Ctrl+Shift+P → Tasks: Run Task → Flash (Wireless)** | 无线烧录 |
+
+无线调试前提：ESP32C3 已上电联网，USB-IP 驱动未占坑（`netstat -ano | findstr 3240` 检查）。
+
+GDB: `C:/Users/Q/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe`
 
 VSCode 中使用 `cube-cmake` 包装器（STM32CubeIDE 自带），预设已配好 toolchain 路径。
 

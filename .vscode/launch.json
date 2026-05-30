@@ -1,0 +1,60 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug (Wired DapLink)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/simpleFOC_1.elf",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f1x.cfg"
+            ],
+            "searchDir": [
+                "C:/APPS/MCU_data/xpack-openocd-0.11.0-5-win32-x64/xpack-openocd-0.11.0-5/scripts"
+            ],
+            "serverpath": "C:/APPS/MCU_data/xpack-openocd-0.11.0-5-win32-x64/xpack-openocd-0.11.0-5/bin/openocd.exe",
+            "gdbPath": "C:/Users/Q/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+            "svdPath": "C:/APPS/MCU_data/svd/STM32F103.svd",
+            "preLaunchTask": "Build",
+            "postDebugTask": "Restore"
+        },
+        {
+            "name": "Debug (Wireless DAP)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/simpleFOC_1.elf",
+            "servertype": "openocd",
+            "configFiles": [
+                "${workspaceFolder}/wireless-dap.cfg",
+                "target/stm32f1x.cfg"
+            ],
+            "searchDir": [
+                "${workspaceFolder}",
+                "C:/APPS/MCU_data/elaphurelink-openocd-win32-x64/share/openocd/scripts"
+            ],
+            "serverpath": "C:/APPS/MCU_data/elaphurelink-openocd-win32-x64/bin/openocd.exe",
+            "gdbPath": "C:/Users/Q/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+            "svdPath": "C:/APPS/MCU_data/svd/STM32F103.svd",
+            "serverStartupDelay": 5000,
+            "gdbServerStartupDelay": 3000,
+            "preLaunchTask": "Build",
+            "postDebugTask": "Restore"
+        },
+        {
+            "name": "Debug (Wireless DAP - Manual OpenOCD)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/simpleFOC_1.elf",
+            "servertype": "external",
+            "gdbTarget": "localhost:3333",
+            "gdbPath": "C:/Users/Q/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+            "svdPath": "C:/APPS/MCU_data/svd/STM32F103.svd",
+            "preLaunchTask": "Build"
+        }
+    ]
+}

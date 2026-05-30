@@ -1,0 +1,64 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "cmake --build build/Debug",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Flash",
+            "type": "shell",
+            "command": "C:/APPS/MCU_data/xpack-openocd-0.11.0-5-win32-x64/xpack-openocd-0.11.0-5/bin/openocd.exe",
+            "args": [
+                "-s", "C:/APPS/MCU_data/xpack-openocd-0.11.0-5-win32-x64/xpack-openocd-0.11.0-5/scripts",
+                "-f", "interface/cmsis-dap.cfg",
+                "-f", "target/stm32f1x.cfg",
+                "-c", "program build/Debug/simpleFOC_1.elf verify reset exit"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Flash (Wireless)",
+            "type": "shell",
+            "command": "C:/APPS/MCU_data/elaphurelink-openocd-win32-x64/bin/openocd.exe",
+            "args": [
+                "-s", "C:/APPS/MCU_data/elaphurelink-openocd-win32-x64/share/openocd/scripts",
+                "-f", "${workspaceFolder}/wireless-dap.cfg",
+                "-f", "target/stm32f1x.cfg",
+                "-c", "program build/Debug/simpleFOC_1.elf verify reset exit"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "problemMatcher": [],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Restore",
+            "type": "shell",
+            "command": "echo Restore task placeholder",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+    ]
+}
