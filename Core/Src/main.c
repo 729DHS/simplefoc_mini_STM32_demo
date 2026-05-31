@@ -62,6 +62,7 @@ MotorController motor;
 /* ---- AS5600 编码器 ---- */
 volatile float    g_mech_angle_rad = 0.0f;  /* 机械角度 (rad)      */
 volatile uint16_t g_raw_angle      = 0;     /* 原始角度 (0-4095)   */
+volatile uint16_t g_i2c_err_count  = 0;     /* I2C 连续失败计数     */
 
 /* ---- 定时标志 ---- */
 volatile uint8_t  foc_tick   = 0;           /* TIM2 溢出标志       */
@@ -214,6 +215,7 @@ int main(void)
           g_raw_angle = raw;
           g_mech_angle_rad = (float)raw * 6.283185307f / 4096.0f;
           Motor_SetMechanicalAngle(&motor, g_mech_angle_rad);
+          g_i2c_err_count = 0;  /* 读成功→清零错误计数 */
 
           /* 首次读到有效传感器数据：使能电机 + 锁定当前位置
            * 防止 target_position=0 导致电机跳半圈
@@ -227,6 +229,18 @@ int main(void)
             motor.electrical_angle = 0.0f;
             PID_Reset(&motor.pid);
             UART_SendString("BOOT: first sensor OK, servo locked.\r\n");
+          }
+        } else {
+          /* I2C 读失败 → 递增错误计数
+           * 连续失败 ≥60 次 (~0.5s) 则禁能, 防止用过期角度失控 */
+          g_i2c_err_count++;
+          if (g_i2c_err_count >= 60 && motor.enabled) {
+            motor.enabled = 0;
+            uint16_t neutral = motor.pwm_period >> 1;
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, neutral);
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, neutral);
+            __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, neutral);
+            UART_SendString("EMERGENCY: I2C lost, motor disabled!\r\n");
           }
         }
 
@@ -250,13 +264,14 @@ int main(void)
       print_tick = tick_count;
       char buf[96];
       snprintf(buf, sizeof(buf),
-        "> A:%4u deg:%6.1f err:%+5.1f tgt:%5.1f v:%.2f %s\r\n",
+        "> A:%4u deg:%6.1f err:%+5.1f tgt:%5.1f v:%.2f %s i2c:%u\r\n",
         g_raw_angle,
         (double)(g_mech_angle_rad * 57.29578f),
         (double)((motor.target_position - g_mech_angle_rad) * 57.29578f),
         (double)(motor.target_position * 57.29578f),
         motor.voltage_limit,
-        motor.enabled ? (motor.mode == MODE_POSITION_SERVO ? "[SERVO]" : "[SPEED]") : "[OFF]"
+        motor.enabled ? (motor.mode == MODE_POSITION_SERVO ? "[SERVO]" : "[SPEED]") : "[OFF]",
+        g_i2c_err_count
       );
       UART_SendString(buf);
     }
@@ -579,7 +594,7 @@ static void UART_SendString(const char *str)
  */
 static void UART_PrintStatus(void)
 {
-  char buf[320];
+  char buf[384];
   snprintf(buf, sizeof(buf),
     "--- Status ------------------\r\n"
     " Mode:     %s (%d)\r\n"
@@ -593,6 +608,7 @@ static void UART_PrintStatus(void)
     " Pos Error:  %+.1f deg\r\n"
     " PID Kp=%.3f Ki=%.3f Kd=%.3f\r\n"
     " Ticks: %u\r\n"
+    " I2C Err: %u\r\n"
     "-----------------------------\r\n",
     motor.mode == MODE_POSITION_SERVO ? "SERVO" : "SPEED",
     (int)motor.mode,
@@ -606,7 +622,8 @@ static void UART_PrintStatus(void)
     (double)(motor.target_position * 57.29578f),
     (double)((motor.target_position - g_mech_angle_rad) * 57.29578f),
     motor.pid.Kp, motor.pid.Ki, motor.pid.Kd,
-    tick_count
+    tick_count,
+    g_i2c_err_count
   );
   UART_SendString(buf);
 }

@@ -19,7 +19,7 @@ static uint16_t AS5600_ReadReg16(I2C_HandleTypeDef *hi2c, uint8_t reg_high) {
         I2C_MEMADD_SIZE_8BIT,
         buf,
         2,
-        10                                   /* 超时 10ms */
+        2                                    /* 超时 2ms (100k I2C 正常<200us) */
     );
     if (status != HAL_OK) {
         return 0xFFFF;                       /* 错误标志 */
@@ -54,7 +54,7 @@ uint8_t AS5600_IsMagnetDetected(I2C_HandleTypeDef *hi2c) {
         I2C_MEMADD_SIZE_8BIT,
         &status,
         1,
-        10
+        2
     );
     if (ret != HAL_OK) return 0;
     return (status >> 3) & 0x01;             /* MD 位 (bit 3) */
