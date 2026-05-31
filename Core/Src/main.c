@@ -63,6 +63,7 @@ MotorController motor;
 volatile float    g_mech_angle_rad = 0.0f;  /* 机械角度 (rad)      */
 volatile uint16_t g_raw_angle      = 0;     /* 原始角度 (0-4095)   */
 volatile uint16_t g_i2c_err_count  = 0;     /* I2C 连续失败计数     */
+volatile uint16_t g_i2c_stuck_cnt  = 0;     /* I2C 读值不变计数 (卡死检测) */
 
 /* ---- 定时标志 ---- */
 volatile uint8_t  foc_tick   = 0;           /* TIM2 溢出标志       */
@@ -210,12 +211,37 @@ int main(void)
         last_ctrl_tick = tick_count;
 
         /* 读取 AS5600 角度 */
+        static uint16_t prev_raw = 0xFFFF;  /* 上一次读到的 raw (卡死检测用) */
         uint16_t raw = AS5600_ReadRawAngle(&hi2c1);
         if (raw != 0xFFFF) {
+          /* ---- 读成功 ---- */
+          g_i2c_err_count = 0;
+
+          /* ---- I2C 卡死检测 ----
+           * STM32F1 I2C 外设有时会卡在 BUSY 状态,
+           * 此时 HAL_I2C_Mem_Read 不报错但返回旧值 (非 0xFFFF)。
+           * 如果连续 ≥100 次 (~0.9s) 读数不变, 认为 I2C 外设卡死,
+           * 硬件复位 I2C1 外设。 */
+          if (raw == prev_raw) {
+            g_i2c_stuck_cnt++;
+            if (g_i2c_stuck_cnt >= 100) {
+              UART_SendString("RESET: I2C stuck, force-reset I2C1...\r\n");
+              __HAL_RCC_I2C1_FORCE_RESET();
+              __HAL_RCC_I2C1_RELEASE_RESET();
+              HAL_I2C_Init(&hi2c1);
+              g_i2c_stuck_cnt = 0;
+              prev_raw = 0xFFFF;
+              /* 跳过本轮 (复位后旧值无效) */
+              continue;
+            }
+          } else {
+            g_i2c_stuck_cnt = 0;  /* 值变了 → I2C 正常 */
+          }
+          prev_raw = raw;
+
           g_raw_angle = raw;
           g_mech_angle_rad = (float)raw * 6.283185307f / 4096.0f;
           Motor_SetMechanicalAngle(&motor, g_mech_angle_rad);
-          g_i2c_err_count = 0;  /* 读成功→清零错误计数 */
 
           /* 首次读到有效传感器数据：使能电机 + 锁定当前位置
            * 防止 target_position=0 导致电机跳半圈
@@ -234,6 +260,8 @@ int main(void)
           /* I2C 读失败 → 递增错误计数
            * 连续失败 ≥60 次 (~0.5s) 则禁能, 防止用过期角度失控 */
           g_i2c_err_count++;
+          g_i2c_stuck_cnt = 0;     /* 读失败不算卡死, 另计 */
+          prev_raw = 0xFFFF;       /* 标记无效 */
           if (g_i2c_err_count >= 60 && motor.enabled) {
             motor.enabled = 0;
             uint16_t neutral = motor.pwm_period >> 1;
