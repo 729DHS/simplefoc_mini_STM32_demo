@@ -143,7 +143,17 @@ int main(void)
 
   /* 设置伺服参数: 低增益起步，避免震荡 */
   Motor_SetVoltage(&motor, 0.4f);              /* 最大 40% 电压       */
-  Motor_SetPID(&motor, 0.8f, 0.05f, 0.04f);   /* Kp Ki Kd (低增益)  */
+  Motor_SetPID(&motor, 0.1f, 0.02f, 0.03f);   /* Kp Ki Kd, 2804 12N14P 低增益起步 */
+
+  /* ---- 启动诊断: 确认初始化后的状态 ---- */
+  {
+    char init_diag[80];
+    snprintf(init_diag, sizeof(init_diag),
+      "INIT: mode=%d enabled=%d pp=%d vlim=%.2f dt=%.4f\r\n",
+      (int)motor.mode, (int)motor.enabled, (int)motor.pole_pairs,
+      (double)motor.voltage_limit, (double)motor.dt);
+    UART_SendString(init_diag);
+  }
 
   /* 启动 TIM1 三路 PWM */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -206,13 +216,17 @@ int main(void)
           Motor_SetMechanicalAngle(&motor, g_mech_angle_rad);
 
           /* 首次读到有效传感器数据：使能电机 + 锁定当前位置
-           * 防止 target_position=0 导致电机跳半圈 */
+           * 防止 target_position=0 导致电机跳半圈
+           * 同时强制设置模式为 SERVO (防御 Motor_Init 模式没有写入的情况) */
           static uint8_t first_read = 1;
           if (first_read) {
             first_read = 0;
+            motor.mode            = MODE_POSITION_SERVO;
             motor.target_position = g_mech_angle_rad;
-            motor.enabled = 1;
+            motor.enabled         = 1;
+            motor.electrical_angle = 0.0f;
             PID_Reset(&motor.pid);
+            UART_SendString("BOOT: first sensor OK, servo locked.\r\n");
           }
         }
 
@@ -568,7 +582,7 @@ static void UART_PrintStatus(void)
   char buf[320];
   snprintf(buf, sizeof(buf),
     "--- Status ------------------\r\n"
-    " Mode:     %s\r\n"
+    " Mode:     %s (%d)\r\n"
     " Enabled:  %d\r\n"
     " Voltage:  %.2f\r\n"
     " Pole Pairs: %d\r\n"
@@ -581,6 +595,7 @@ static void UART_PrintStatus(void)
     " Ticks: %u\r\n"
     "-----------------------------\r\n",
     motor.mode == MODE_POSITION_SERVO ? "SERVO" : "SPEED",
+    (int)motor.mode,
     motor.enabled,
     motor.voltage_limit,
     motor.pole_pairs,

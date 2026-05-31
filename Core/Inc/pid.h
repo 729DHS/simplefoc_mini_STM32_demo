@@ -7,13 +7,14 @@
 #define PID_H
 
 typedef struct {
-    float Kp;               /* 比例系数          */
-    float Ki;               /* 积分系数          */
-    float Kd;               /* 微分系数          */
-    float integral;         /* 积分累加值        */
-    float prev_error;       /* 上一次误差 (微分用) */
-    float integral_limit;   /* 积分限幅          */
-    float output_limit;     /* 输出限幅 (±)      */
+    float Kp;               /* 比例系数            */
+    float Ki;               /* 积分系数            */
+    float Kd;               /* 微分系数            */
+    float integral;         /* 积分累加值          */
+    float prev_measurement; /* 上一次测量值 (D 用)   */
+    float deriv_filtered;   /* 滤波后的微分值        */
+    float integral_limit;   /* 积分限幅            */
+    float output_limit;     /* 输出限幅 (±)        */
 } PIDController;
 
 /**

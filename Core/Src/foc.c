@@ -38,9 +38,10 @@ void Motor_Init(MotorController *motor, uint8_t pole_pairs,
     motor->pwm_period        = pwm_period;
     motor->pwm_half_period   = (float)pwm_period * 0.5f;
 
-    /* 初始化位置 PID: Kp=0.8, Ki=0.05, Kd=0.04, 积分限幅±0.3, 输出限幅±1.0
-     * dt 由调用者根据实际传感器更新率设置 (~110Hz) */
-    PID_Init(&motor->pid, 0.8f, 0.05f, 0.04f, 0.3f, 1.0f);
+    /* 初始化位置 PID: Kp=0.1, Ki=0.02, Kd=0.03, 积分限幅±0.3, 输出限幅±1.0
+     * 2804 12N14P 电机内阻低响应快, 用小增益起步。
+     * D 项采用测量值微分+低通滤波, 不会因噪声抖动, 可放心加大。 */
+    PID_Init(&motor->pid, 0.1f, 0.02f, 0.03f, 0.3f, 1.0f);
 }
 
 /* ======================== PWM 更新 (核心) ======================== */
