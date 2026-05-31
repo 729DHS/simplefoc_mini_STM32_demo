@@ -262,7 +262,7 @@ int main(void)
     static uint16_t print_tick = 0;
     if (auto_print_enabled && tick_count - print_tick >= 550) {
       print_tick = tick_count;
-      char buf[96];
+      static char buf[96];  /* static — 不放栈上 */
       snprintf(buf, sizeof(buf),
         "> A:%4u deg:%6.1f err:%+5.1f tgt:%5.1f v:%.2f %s i2c:%u\r\n",
         g_raw_angle,
@@ -594,7 +594,7 @@ static void UART_SendString(const char *str)
  */
 static void UART_PrintStatus(void)
 {
-  char buf[384];
+  static char buf[384];  /* static — 不放栈上, 防栈溢出 */
   snprintf(buf, sizeof(buf),
     "--- Status ------------------\r\n"
     " Mode:     %s (%d)\r\n"
@@ -641,7 +641,7 @@ static void UART_ParseCommand(char *cmd)
   if (*cmd == '\0') return;
 
   char op = *cmd++;
-  char buf[64];  /* 通用反馈缓冲区 */
+  static char buf[64];  /* static — 不放栈上 */
 
   switch (op) {
 
