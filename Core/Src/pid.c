@@ -17,6 +17,11 @@
  */
 
 #include "pid.h"
+#include <math.h>
+
+/* prev_measurement 的哨兵值: 标记"尚未初始化"
+ * 合法角度范围 0~2π (0~6.28), 这个值远在范围外 */
+#define PID_MEAS_UNINIT  (-1e10f)
 
 void PID_Init(PIDController *pid, float Kp, float Ki, float Kd,
               float integral_limit, float output_limit)
@@ -25,7 +30,7 @@ void PID_Init(PIDController *pid, float Kp, float Ki, float Kd,
     pid->Ki               = Ki;
     pid->Kd               = Kd;
     pid->integral         = 0.0f;
-    pid->prev_measurement = 0.0f;
+    pid->prev_measurement = PID_MEAS_UNINIT;  /* 哨兵: 下次 PID_Update 会跳过 D  */
     pid->deriv_filtered   = 0.0f;
     pid->integral_limit   = integral_limit;
     pid->output_limit     = output_limit;
@@ -50,9 +55,14 @@ float PID_Update(PIDController *pid, float setpoint, float measurement, float dt
     float I_contrib = pid->Ki * pid->integral;
 
     /* === 微分项 (对测量值微分 + 低通滤波) ===
-     * 测量值变化率 = 速度, 再乘低通滤波系数抑制噪声 */
+     * 测量值变化率 = 速度, 再乘低通滤波系数抑制噪声
+     * 首帧或 PID_Reset 后: prev_measurement 为哨兵值 → 跳过 D,
+     *   只记录当前测量值, 避免从 0 跳到真实值产生速度尖峰。 */
     float D_out = 0.0f;
-    if (dt > 1e-6f) {
+    if (pid->prev_measurement < -1e9f) {
+        /* 首次调用 (或 PID_Reset 后的首个有效帧) → 跳过 D */
+        pid->prev_measurement = measurement;
+    } else if (dt > 1e-6f) {
         float velocity = (measurement - pid->prev_measurement) / dt;
         /* 一阶低通滤波: tau=0.008s, alpha = dt/(dt+tau) @ dt≈9ms → alpha≈0.53 */
         const float tau = 0.008f;
@@ -60,8 +70,8 @@ float PID_Update(PIDController *pid, float setpoint, float measurement, float dt
         pid->deriv_filtered += alpha * (velocity - pid->deriv_filtered);
         /* 阻尼: 速度为正 → 输出负力矩 (刹车) */
         D_out = -pid->Kd * pid->deriv_filtered;
+        pid->prev_measurement = measurement;
     }
-    pid->prev_measurement = measurement;
 
     /* === 合成输出 === */
     float output = P_out + I_contrib + D_out;
@@ -90,6 +100,8 @@ float PID_Update(PIDController *pid, float setpoint, float measurement, float dt
 void PID_Reset(PIDController *pid)
 {
     pid->integral         = 0.0f;
-    pid->prev_measurement = 0.0f;
-    pid->deriv_filtered   = 0.0f;
+    /* prev_measurement 设为哨兵: 下次 PID_Update 会跳过 D 项,
+     * 避免从旧值跳到当前值产生速度尖峰 (像之前设 Kp=0 时那样) */
+    pid->prev_measurement = PID_MEAS_UNINIT;
+    /* deriv_filtered 不清零, 首帧 D 项被跳过, 它会从零重新累积 */
 }
