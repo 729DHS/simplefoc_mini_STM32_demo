@@ -146,7 +146,7 @@ int main(void)
 
   /* 设置伺服参数: 低增益起步，避免震荡 */
   Motor_SetVoltage(&motor, 0.4f);              /* 最大 40% 电压       */
-  Motor_SetPID(&motor, 0.1f, 0.02f, 0.03f);   /* Kp Ki Kd, 2804 12N14P 低增益起步 */
+  Motor_SetPID(&motor, 0.1f, 0.02f, 0.01f);   /* Kp Ki Kd, 2804 12N14P 低增益起步 */
 
   /* ---- 启动诊断: 确认初始化后的状态 ---- */
   {
