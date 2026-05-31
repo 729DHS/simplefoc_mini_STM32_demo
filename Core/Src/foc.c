@@ -82,13 +82,9 @@ void Motor_UpdatePWM(MotorController *motor, TIM_HandleTypeDef *htim)
         float theta_m = motor->mechanical_angle;
         float theta_e = theta_m * (float)motor->pole_pairs + M_PI_2;
 
-        /* 位置误差 (归一化到 [-π, π]) */
-        float error = motor->target_position - theta_m;
-        while (error >  M_PI) error -= M_2PI;
-        while (error < -M_PI) error += M_2PI;
-
-        /* PID 计算力矩指令 */
-        float torque = PID_Update(&motor->pid, 0.0f, error, motor->dt);
+        /* PID 计算力矩指令
+         * 直接传目标位置和实测位置，内部 error = setpoint - measurement */
+        float torque = PID_Update(&motor->pid, motor->target_position, theta_m, motor->dt);
 
         /* 力矩 = q 轴电压幅值 */
         float amp = torque;

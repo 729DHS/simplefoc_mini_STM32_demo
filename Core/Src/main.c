@@ -73,6 +73,9 @@ volatile char     uart_rx_buf[UART_RX_BUF_SIZE];
 volatile uint8_t  uart_rx_idx   = 0;
 volatile uint8_t  uart_cmd_ready = 0;
 
+/* ---- 自动打印开关 ---- */
+volatile uint8_t  auto_print_enabled = 1;   /* 1=每500ms自动打印 */
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -133,13 +136,14 @@ int main(void)
   Motor_Init(&motor, 7, __HAL_TIM_GET_AUTORELOAD(&htim1),
              (float)AS5600_READ_DIV / FOC_TICK_HZ);
 
-  /* 硬件使能 SimpleFOC Mini */
+  /* 硬件使能 SimpleFOC Mini (PA11 = HIGH)
+   * 注意: 软件使能 (motor.enabled = 1) 要等第一次读完传感器再开
+   *       否则 target_position 会被锁定为 0 (还没读到编码器) */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);
 
   /* 设置伺服参数: 低增益起步，避免震荡 */
   Motor_SetVoltage(&motor, 0.4f);              /* 最大 40% 电压       */
   Motor_SetPID(&motor, 0.8f, 0.05f, 0.04f);   /* Kp Ki Kd (低增益)  */
-  Motor_Enable(&motor, 1);                     /* 使能, 锁定当前位置   */
 
   /* 启动 TIM1 三路 PWM */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -153,18 +157,25 @@ int main(void)
   HAL_UART_Receive_IT(&huart1, (uint8_t *)&uart_rx_byte, 1);
 
   /* 打印帮助 */
-  UART_SendString("\r\n=================================\r\n");
-  UART_SendString(" SimpleFOC Position Servo v2.0\r\n");
-  UART_SendString("=================================\r\n");
-  UART_SendString(" Mode: POSITION SERVO (sensor + PID)\r\n");
-  UART_SendString("  M0    - 切换开环速度模式\r\n");
-  UART_SendString("  M1    - 切换位置伺服模式\r\n");
-  UART_SendString("  T<deg>- 设置目标角度 (如 T90)\r\n");
-  UART_SendString("  V<0-1>- 电压限幅\r\n");
-  UART_SendString("  Kp/Ki/Kd<val> - PID 参数\r\n");
-  UART_SendString("  E1/E0 - 使能/禁用\r\n");
-  UART_SendString("  ?     - 状态\r\n");
-  UART_SendString("=================================\r\n");
+  UART_SendString("\r\n");
+  UART_SendString("========================================\r\n");
+  UART_SendString("  SimpleFOC Position Servo v2.1\r\n");
+  UART_SendString("========================================\r\n");
+  UART_SendString("  模式:\r\n");
+  UART_SendString("   M0 - 开环速度模式  M1 - 位置伺服模式\r\n");
+  UART_SendString("  伺服命令:\r\n");
+  UART_SendString("   T<deg>    目标角度    (如 T90, T-45)\r\n");
+  UART_SendString("   V<0~1>    电压限幅    (如 V0.3)\r\n");
+  UART_SendString("   Kp/Ki/Kd<n> PID 增益 (如 Kp0.5)\r\n");
+  UART_SendString("   E1/E0     使能/禁用\r\n");
+  UART_SendString("   P<n>      极对数      (如 P7)\r\n");
+  UART_SendString("   S<rpm>    开环转速    (如 S60)\r\n");
+  UART_SendString("  诊断:\r\n");
+  UART_SendString("   ?         完整状态\r\n");
+  UART_SendString("   D         编码器原始值 (持续打印5次)\r\n");
+  UART_SendString("   C         切换自动状态打印 (开/关)\r\n");
+  UART_SendString("   H         本帮助\r\n");
+  UART_SendString("========================================\r\n");
 
   /* USER CODE END 2 */
 
@@ -193,6 +204,16 @@ int main(void)
           g_raw_angle = raw;
           g_mech_angle_rad = (float)raw * 6.283185307f / 4096.0f;
           Motor_SetMechanicalAngle(&motor, g_mech_angle_rad);
+
+          /* 首次读到有效传感器数据：使能电机 + 锁定当前位置
+           * 防止 target_position=0 导致电机跳半圈 */
+          static uint8_t first_read = 1;
+          if (first_read) {
+            first_read = 0;
+            motor.target_position = g_mech_angle_rad;
+            motor.enabled = 1;
+            PID_Reset(&motor.pid);
+          }
         }
 
         /* 新角度 → 运行一次 PID → 更新 PWM */
@@ -205,13 +226,13 @@ int main(void)
       uart_cmd_ready = 0;
       UART_ParseCommand((char *)uart_rx_buf);
       uart_rx_idx = 0;
-      /* 重新开启中断接收 */
-      HAL_UART_Receive_IT(&huart1, (uint8_t *)&uart_rx_byte, 1);
+      /* 注意: 不在这里调 HAL_UART_Receive_IT
+       * 中断回调 HAL_UART_RxCpltCallback 已经持续在接收下一个字节 */
     }
 
-    /* ===== 自动打印状态 (每 ~500ms) ===== */
+    /* ===== 自动打印状态 (每 ~500ms, 可通过 'C' 命令开关) ===== */
     static uint16_t print_tick = 0;
-    if (tick_count - print_tick >= 550) {
+    if (auto_print_enabled && tick_count - print_tick >= 550) {
       print_tick = tick_count;
       char buf[96];
       snprintf(buf, sizeof(buf),
@@ -578,19 +599,17 @@ static void UART_PrintStatus(void)
 /**
  * @brief 解析串口命令
  *
- * 协议:  单字母命令 + 可选参数，换行结束
- *   S<rpm>  设置目标转速  例: S100  (100 RPM)
- *   V<0-1>  设置电压幅值  例: V0.3  (30% 占空比)
- *   E1/E0   使能/禁用电机  例: E1   (开启)
- *   P<n>    设置极对数    例: P7
- *   ?       打印状态
+ *  协议: 单字母命令 + 可选参数，换行结束。大小写不敏感。
+ *  @note atof() 始终可用 (stdlib), snprintf %f 需要 -u _printf_float
  */
 static void UART_ParseCommand(char *cmd)
 {
+  /* 跳过前导空白 */
   while (*cmd == ' ' || *cmd == '\t') cmd++;
   if (*cmd == '\0') return;
 
   char op = *cmd++;
+  char buf[64];  /* 通用反馈缓冲区 */
 
   switch (op) {
 
@@ -614,8 +633,8 @@ static void UART_ParseCommand(char *cmd)
       float deg = (float)atof(cmd);
       float rad = deg * 0.0174532925f;  /* deg → rad */
       Motor_SetTargetPosition(&motor, rad);
-      char buf[48];
-      snprintf(buf, sizeof(buf), "OK Target -> %.1f deg\r\n", deg);
+      snprintf(buf, sizeof(buf), "OK Target -> %.1f deg (%.2f rad)\r\n",
+               (double)deg, (double)rad);
       UART_SendString(buf);
       break;
     }
@@ -624,19 +643,18 @@ static void UART_ParseCommand(char *cmd)
     case 'K': case 'k': {
       if (*cmd == 'p' || *cmd == 'P') {
         motor.pid.Kp = (float)atof(cmd + 1);
-        char buf[48];
-        snprintf(buf, sizeof(buf), "OK Kp=%.3f\r\n", motor.pid.Kp);
+        snprintf(buf, sizeof(buf), "OK Kp=%.3f\r\n", (double)motor.pid.Kp);
         UART_SendString(buf);
       } else if (*cmd == 'i' || *cmd == 'I') {
         motor.pid.Ki = (float)atof(cmd + 1);
-        char buf[48];
-        snprintf(buf, sizeof(buf), "OK Ki=%.3f\r\n", motor.pid.Ki);
+        snprintf(buf, sizeof(buf), "OK Ki=%.3f\r\n", (double)motor.pid.Ki);
         UART_SendString(buf);
       } else if (*cmd == 'd' || *cmd == 'D') {
         motor.pid.Kd = (float)atof(cmd + 1);
-        char buf[48];
-        snprintf(buf, sizeof(buf), "OK Kd=%.3f\r\n", motor.pid.Kd);
+        snprintf(buf, sizeof(buf), "OK Kd=%.3f\r\n", (double)motor.pid.Kd);
         UART_SendString(buf);
+      } else {
+        UART_SendString("ERR Usage: Kp<n> Ki<n> Kd<n>\r\n");
       }
       PID_Reset(&motor.pid);
       break;
@@ -646,8 +664,7 @@ static void UART_ParseCommand(char *cmd)
     case 'S': case 's': {
       float rpm = (float)atof(cmd);
       Motor_SetSpeed(&motor, rpm);
-      char buf[48];
-      snprintf(buf, sizeof(buf), "OK Speed -> %.0f RPM\r\n", rpm);
+      snprintf(buf, sizeof(buf), "OK Speed -> %.0f RPM\r\n", (double)rpm);
       UART_SendString(buf);
       break;
     }
@@ -656,8 +673,7 @@ static void UART_ParseCommand(char *cmd)
     case 'V': case 'v': {
       float v = (float)atof(cmd);
       Motor_SetVoltage(&motor, v);
-      char buf[48];
-      snprintf(buf, sizeof(buf), "OK Voltage -> %.2f\r\n", v);
+      snprintf(buf, sizeof(buf), "OK Voltage -> %.2f\r\n", (double)v);
       UART_SendString(buf);
       break;
     }
@@ -675,7 +691,7 @@ static void UART_ParseCommand(char *cmd)
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, neutral);
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, neutral);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
-        UART_SendString("OK Motor DISABLED\r\n");
+        UART_SendString("OK Motor DISABLED (PWM=50%)\r\n");
       }
       break;
     }
@@ -683,28 +699,59 @@ static void UART_ParseCommand(char *cmd)
     /* ==================== 极对数 ==================== */
     case 'P': case 'p': {
       int pp = atoi(cmd);
-      if (pp >= 1 && pp <= 50) {
+      if (pp >= 1 && pp <= 100) {
         motor.pole_pairs = (uint8_t)pp;
-        char buf[48];
         snprintf(buf, sizeof(buf), "OK Pole pairs -> %d\r\n", pp);
         UART_SendString(buf);
       } else {
-        UART_SendString("ERR Pole pairs must be 1-50\r\n");
+        UART_SendString("ERR Pole pairs must be 1-100\r\n");
       }
       break;
     }
 
-    /* ==================== 状态 ==================== */
+    /* ==================== 切换自动打印 ==================== */
+    case 'C': case 'c':
+      auto_print_enabled = !auto_print_enabled;
+      if (auto_print_enabled) {
+        UART_SendString("OK Auto print ON (every 0.5s)\r\n");
+      } else {
+        UART_SendString("OK Auto print OFF\r\n");
+      }
+      break;
+
+    /* ==================== 编码器诊断 ==================== */
+    case 'D': case 'd': {
+      UART_SendString("--- Encoder Diag (5 samples) ---\r\n");
+      uint8_t magnet = AS5600_IsMagnetDetected(&hi2c1);
+      snprintf(buf, sizeof(buf), " Magnet: %s\r\n", magnet ? "OK" : "MISSING!");
+      UART_SendString(buf);
+      for (int i = 0; i < 5; i++) {
+        uint16_t raw = AS5600_ReadRawAngle(&hi2c1);
+        float deg = (float)raw * 360.0f / 4096.0f;
+        snprintf(buf, sizeof(buf),
+                 " [%d] raw=%4u -> %.1f deg (0x%04X)\r\n",
+                 i + 1, raw, (double)deg, raw);
+        UART_SendString(buf);
+        HAL_Delay(5);  /* 等 5ms 再读下一个 */
+      }
+      UART_SendString("--- End Diag ---\r\n");
+      break;
+    }
+
+    /* ==================== 完整状态 ==================== */
     case '?':
       UART_PrintStatus();
       break;
 
+    /* ==================== 帮助 ==================== */
     case 'H': case 'h':
-      UART_SendString("M0/M1 T<deg> V<0-1> Kp/Ki/Kd S<rpm> E1/E0 ?\r\n");
+      UART_SendString("M0/M1  T<deg>  V<n>  Kp/Ki/Kd<n>  S<rpm>\r\n");
+      UART_SendString("E1/E0  P<n>    C(toggle_auto)  D(diag)  ?(status)\r\n");
       break;
 
     default:
-      UART_SendString("ERR Unknown. M/T/V/K/S/E/?\r\n");
+      snprintf(buf, sizeof(buf), "ERR Unknown cmd '%c'. H for help\r\n", op);
+      UART_SendString(buf);
       break;
   }
 }
