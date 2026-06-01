@@ -79,6 +79,9 @@ volatile uint8_t  uart_cmd_ready = 0;
 /* ---- 自动打印开关 ---- */
 volatile uint8_t  auto_print_enabled = 1;   /* 1=每500ms自动打印 */
 
+/* ---- VOFA+ FireWater 协议输出 ---- */
+volatile uint8_t  vofa_enabled      = 0;   /* 1=每帧控制周期输出 FireWater 数据 */
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -195,6 +198,7 @@ int main(void)
   UART_SendString("   ?         完整状态\r\n");
   UART_SendString("   D         编码器原始值 (持续打印5次)\r\n");
   UART_SendString("   C         切换自动状态打印 (开/关)\r\n");
+  UART_SendString("   O1/O0     VOFA+ FireWater 输出 (19Hz 可视化)\r\n");
   UART_SendString("   H         本帮助\r\n");
   UART_SendString("========================================\r\n");
 
@@ -277,6 +281,22 @@ int main(void)
 
         /* 新角度 → 运行一次 PID → 更新 PWM */
         Motor_UpdatePWM(&motor, &htim1);
+
+        /* ---- VOFA+ FireWater 输出 (每控制帧, 仅传感器读数成功时) ----
+         * 格式: angle,target,error,i2cerr\n
+         * 4 通道 float, CSV 文本, 110Hz @ 115200 → 占用 ~17% 带宽 */
+        if (vofa_enabled && raw != 0xFFFF) {
+          static char vbuf[48];
+          int len = snprintf(vbuf, sizeof(vbuf),
+            "%.1f,%.1f,%.1f,%u\r\n",
+            (double)(g_mech_angle_rad * 57.29578f),
+            (double)(motor.target_position * 57.29578f),
+            (double)((motor.target_position - g_mech_angle_acc) * 57.29578f),
+            g_i2c_err_count);
+          if (len > 0 && len < (int)sizeof(vbuf)) {
+            HAL_UART_Transmit(&huart1, (uint8_t *)vbuf, (uint16_t)len, 5);
+          }
+        }
       }
     }
 
@@ -788,6 +808,17 @@ static void UART_ParseCommand(char *cmd)
       }
       break;
 
+    /* ==================== VOFA+ FireWater 开关 ==================== */
+    case 'O': case 'o':
+      vofa_enabled = (uint8_t)atoi(cmd);
+      if (vofa_enabled) {
+        auto_print_enabled = 0;  /* FireWater 和文本打印互斥 */
+        UART_SendString("OK VOFA+ FireWater ON (angle,target,error,i2c)\r\n");
+      } else {
+        UART_SendString("OK VOFA+ OFF\r\n");
+      }
+      break;
+
     /* ==================== 编码器诊断 ==================== */
     case 'D': case 'd': {
       UART_SendString("--- Encoder Diag (5 samples) ---\r\n");
@@ -815,7 +846,7 @@ static void UART_ParseCommand(char *cmd)
     /* ==================== 帮助 ==================== */
     case 'H': case 'h':
       UART_SendString("M0/M1  T<deg>  V<n>  Kp/Ki/Kd<n>  S<rpm>\r\n");
-      UART_SendString("E1/E0  P<n>    C(toggle_auto)  D(diag)  ?(status)\r\n");
+      UART_SendString("E1/E0  P<n>    C(auto) O1/O0(VOFA) D(diag) ?\r\n");
       break;
 
     default:
