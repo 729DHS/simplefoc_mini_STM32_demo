@@ -67,7 +67,7 @@ volatile uint16_t g_i2c_err_count  = 0;     /* 软 I2C 连续失败计数  */
 
 /* ---- 定时标志 ---- */
 volatile uint8_t  foc_tick   = 0;           /* TIM2 溢出标志       */
-volatile uint16_t tick_count = 0;           /* 总 tick 计数        */
+volatile uint32_t tick_count = 0;           /* 总 tick 计数 (1098Hz, ~49天回绕) */
 
 /* ---- UART 接收 ---- */
 volatile uint8_t  uart_rx_byte;             /* 单字节接收缓冲       */
@@ -217,7 +217,7 @@ int main(void)
 
       /* 只在读到新传感器数据时才执行 PID + PWM 更新
        * 避免用旧角度重复计算导致积分震荡 */
-      static uint16_t last_ctrl_tick = 0;
+      static uint32_t last_ctrl_tick = 0;
       if (tick_count - last_ctrl_tick >= AS5600_READ_DIV) {
         last_ctrl_tick = tick_count;
 
@@ -269,7 +269,7 @@ int main(void)
     }
 
     /* ===== 自动打印状态 (每 ~500ms, 可通过 'C' 命令开关) ===== */
-    static uint16_t print_tick = 0;
+    static uint32_t print_tick = 0;
     if (auto_print_enabled && tick_count - print_tick >= 550) {
       print_tick = tick_count;
       static char buf[96];  /* static — 不放栈上 */
@@ -617,7 +617,7 @@ static void UART_PrintStatus(void)
     " Target Pos: %.1f deg\r\n"
     " Pos Error:  %+.1f deg\r\n"
     " PID Kp=%.3f Ki=%.3f Kd=%.3f\r\n"
-    " Ticks: %u\r\n"
+    " Ticks: %lu\r\n"
     " I2C Err: %u\r\n"
     "-----------------------------\r\n",
     motor.mode == MODE_POSITION_SERVO ? "SERVO" : "SPEED",
