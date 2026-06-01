@@ -61,7 +61,8 @@ UART_HandleTypeDef huart1;
 MotorController motor;
 
 /* ---- AS5600 编码器 ---- */
-volatile float    g_mech_angle_rad = 0.0f;  /* 机械角度 (rad)      */
+volatile float    g_mech_angle_rad = 0.0f;  /* 当前圈机械角度 (rad, 0~2π) */
+volatile float    g_mech_angle_acc = 0.0f;  /* 累计机械角度 (rad, 无限, 跨圈追踪) */
 volatile uint16_t g_raw_angle      = 0;     /* 原始角度 (0-4095)   */
 volatile uint16_t g_i2c_err_count  = 0;     /* 软 I2C 连续失败计数  */
 
@@ -227,14 +228,34 @@ int main(void)
           g_i2c_err_count = 0;
           g_raw_angle = raw;
           g_mech_angle_rad = (float)raw * 6.283185307f / 4096.0f;
-          Motor_SetMechanicalAngle(&motor, g_mech_angle_rad);
+
+          /* ---- 累计角度 (跨圈追踪) ----
+           * AS5600 只输出 0~2π 的绝对值, 过 0/360° 边界会跳变.
+           * 这里追踪每次读数的变化量, 检测到 >π 的跳变就修正,
+           * 把单圈绝对值展开为跨越多圈的累计角度. */
+          static float prev_wrapped = -1e10f;  /* 哨兵: 首帧 */
+          if (prev_wrapped < -1e9f) {
+            /* 首帧: 直接用当前值初始化 */
+            g_mech_angle_acc = g_mech_angle_rad;
+            prev_wrapped = g_mech_angle_rad;
+          } else {
+            float delta = g_mech_angle_rad - prev_wrapped;
+            /* 修正 ±π 跳变 → 正常物理转动不会在 9ms 内超过半圈 */
+            if (delta >  3.14159265f) delta -= 6.283185307f;
+            if (delta < -3.14159265f) delta += 6.283185307f;
+            g_mech_angle_acc += delta;
+            prev_wrapped = g_mech_angle_rad;
+          }
+
+          /* 给 PID 和 FOC 传累计角度 (无跳变) */
+          Motor_SetMechanicalAngle(&motor, g_mech_angle_acc);
 
           /* 首次读到有效传感器数据：使能电机 + 锁定当前位置 */
           static uint8_t first_read = 1;
           if (first_read) {
             first_read = 0;
             motor.mode            = MODE_POSITION_SERVO;
-            motor.target_position = g_mech_angle_rad;
+            motor.target_position = g_mech_angle_acc;  /* 累计位置 */
             motor.enabled         = 1;
             motor.electrical_angle = 0.0f;
             PID_Reset(&motor.pid);
@@ -273,11 +294,13 @@ int main(void)
     if (auto_print_enabled && tick_count - print_tick >= 550) {
       print_tick = tick_count;
       static char buf[96];  /* static — 不放栈上 */
+      /* 显示误差: 用累计角度 (target - g_mech_angle_acc),
+       * 值为 0 时在目标, ±360°=多转一圈, 直观显示"转了几圈" */
       snprintf(buf, sizeof(buf),
-        "> A:%4u deg:%6.1f err:%+5.1f tgt:%5.1f v:%.2f %s i2c:%u\r\n",
+        "> A:%4u deg:%6.1f err:%+6.1f tgt:%5.1f v:%.2f %s i2c:%u\r\n",
         g_raw_angle,
         (double)(g_mech_angle_rad * 57.29578f),
-        (double)((motor.target_position - g_mech_angle_rad) * 57.29578f),
+        (double)((motor.target_position - g_mech_angle_acc) * 57.29578f),
         (double)(motor.target_position * 57.29578f),
         motor.voltage_limit,
         motor.enabled ? (motor.mode == MODE_POSITION_SERVO ? "[SERVO]" : "[SPEED]") : "[OFF]",
@@ -630,7 +653,7 @@ static void UART_PrintStatus(void)
     (double)(g_mech_angle_rad * 57.29578f),
     motor.electrical_angle,
     (double)(motor.target_position * 57.29578f),
-    (double)((motor.target_position - g_mech_angle_rad) * 57.29578f),
+    (double)((motor.target_position - g_mech_angle_acc) * 57.29578f),
     motor.pid.Kp, motor.pid.Ki, motor.pid.Kd,
     tick_count,
     g_i2c_err_count
@@ -673,10 +696,14 @@ static void UART_ParseCommand(char *cmd)
     /* ==================== 目标角度 (伺服模式) ==================== */
     case 'T': case 't': {
       float deg = (float)atof(cmd);
-      float rad = deg * 0.0174532925f;  /* deg → rad */
-      Motor_SetTargetPosition(&motor, rad);
-      snprintf(buf, sizeof(buf), "OK Target -> %.1f deg (%.2f rad)\r\n",
-               (double)deg, (double)rad);
+      /* 将用户请求的绝对角度 (0~360°) 映射到累计坐标系:
+       * 找距离当前累计位置最近的那个"90°"实例 */
+      float req = deg * 0.0174532925f;        /* 请求角 (rad, 0~2π) */
+      float diff = req - g_mech_angle_rad;    /* 当前圈内的差值 */
+      if (diff >  3.14159265f) diff -= 6.283185307f;
+      if (diff < -3.14159265f) diff += 6.283185307f;
+      motor.target_position = g_mech_angle_acc + diff;
+      snprintf(buf, sizeof(buf), "OK Target -> %.1f deg\r\n", (double)deg);
       UART_SendString(buf);
       break;
     }
