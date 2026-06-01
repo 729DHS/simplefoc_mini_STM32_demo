@@ -158,6 +158,13 @@ int main(void)
     UART_SendString(init_diag);
   }
 
+  /* ---- IWDG 独立看门狗: ~1s 超时, 主循环卡死自动复位 ---- */
+  IWDG->KR = 0x5555;        /* 解锁 IWDG 寄存器 */
+  IWDG->PR = 0x04;          /* 预分频 /64 → LSI(40kHz)/64 = 625Hz */
+  IWDG->RLR = 625;          /* 重装载 625 → 1s 超时 */
+  IWDG->KR = 0xCCCC;        /* 启动 IWDG (启动后无法软件关闭) */
+  IWDG->KR = 0xAAAA;        /* 喂一次狗 */
+
   /* 启动 TIM1 三路 PWM */
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -199,6 +206,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    /* 喂看门狗: 主循环每轮都喂, 卡死超过 1s 自动复位 */
+    IWDG->KR = 0xAAAA;
 
     /* ===== FOC 控制更新 (同步传感器速率, ~110Hz) ===== */
     if (foc_tick) {

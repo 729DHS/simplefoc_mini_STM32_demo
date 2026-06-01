@@ -85,7 +85,31 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
+  /* 提取栈帧中的 PC 和 LR (Cortex-M3 自动压栈: r0-r3,r12,lr,pc,xPSR) */
+  uint32_t msp;
+  __asm volatile ("MRS %0, msp" : "=r"(msp));
+  uint32_t *stack = (uint32_t *)msp;
+  uint32_t pc   = stack[6];        /* 出故障的指令地址 */
+  uint32_t lr   = stack[5];        /* 异常返回地址     */
+  uint32_t cfsr = SCB->CFSR;       /* 故障类型寄存器    */
+  uint32_t hfsr = SCB->HFSR;
 
+  /* 绕过 HAL, 直接操作 USART1 寄存器输出诊断信息 */
+  #define HF_PUTC(c) do { while(!(USART1->SR & USART_SR_TXE)); USART1->DR=(c); } while(0)
+  #define HF_PUTS(s) do { const char *p=s; while(*p) HF_PUTC(*p++); } while(0)
+  #define HF_HEX(v)  do { \
+    static const char hx[]="0123456789ABCDEF"; \
+    for(int8_t _i=28; _i>=0; _i-=4) HF_PUTC(hx[((v)>>_i)&0xF]); \
+  } while(0)
+
+  HF_PUTS("\r\n=== HARDFAULT ===\r\nPC:  0x"); HF_HEX(pc);
+  HF_PUTS("\r\nLR:  0x"); HF_HEX(lr);
+  HF_PUTS("\r\nCFSR:0x"); HF_HEX(cfsr);
+  HF_PUTS("\r\nHFSR:0x"); HF_HEX(hfsr);
+  HF_PUTS("\r\n=== WAIT IWDG RESET ===\r\n");
+  #undef HF_PUTC
+  #undef HF_PUTS
+  #undef HF_HEX
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
